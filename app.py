@@ -38,7 +38,7 @@ with st.sidebar:
     
     # Selezione tra i due modelli top del 2026
     model_option = st.selectbox(
-        "Scegli il 'cervello':",
+        "Scegli il modello:",
         ("Llama 3.3 70B (Architetto)", "Qwen 3 32B (Chirurgo del Codice)"),
         help="Llama è ottimo per spiegazioni, Qwen è precisissimo nel coding puro."
     )
@@ -72,7 +72,7 @@ for message in st.session_state["messages"]:
             st.markdown(message["content"])
 
 # --- 5. INTERAZIONE UTENTE E GENERAZIONE RISPOSTA ---
-if prompt := st.chat_input("Esempio: Implementa la classe OrologioDigitale con una Enum..."):
+if prompt := st.chat_input("Esempio: Chiedi qualcosa su Java (o altri linguaggi)..."):
     # Aggiungi messaggio utente alla sessione
     st.session_state["messages"].append({"role": "user", "content": prompt})
     with st.chat_message("user"):
