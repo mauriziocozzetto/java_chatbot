@@ -72,7 +72,7 @@ for message in st.session_state["messages"]:
             st.markdown(message["content"])
 
 # --- 5. INTERAZIONE UTENTE E GENERAZIONE RISPOSTA ---
-if prompt := st.chat_input("Esempio: Chiedi qualcosa su Java (o altri linguaggi)..."):
+if prompt := st.chat_input("Esempio: Chiedi qualcosa su Java..."):
     # Aggiungi messaggio utente alla sessione
     st.session_state["messages"].append({"role": "user", "content": prompt})
     with st.chat_message("user"):
