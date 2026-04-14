@@ -42,10 +42,11 @@ with st.sidebar:
     )
     
     # Mappatura degli ID modelli corretti per Groq
+    # Mappatura aggiornata degli ID modelli per Groq (Aprile 2026)
     model_map = {
-        "DeepSeek-R1 (Ragionamento Puro)": "deepseek-r1-distill-llama-70b",
+        "DeepSeek-R1 (Ragionamento)": "deepseek-r1-distill-llama-70b-specdec", # O l'ID aggiornato dal portale Groq
         "Llama 3.3 70B (Architetto)": "llama-3.3-70b-versatile",
-        "Qwen 3 32B (Chirurgo del Codice)": "qwen-2.5-72b" # Nota: ID aggiornato per Qwen su Groq
+        "Qwen 3 32B (Chirurgo del Codice)": "qwen-2.5-72b"
     }
     
     selected_model = model_map[model_option]
