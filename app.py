@@ -83,7 +83,7 @@ if prompt and api_key:
                 # --- CASO A: C'è un'immagine (Usiamo Llama Vision) ---
                 if pasted_img:
                     base64_image = encode_image(pasted_img)
-                    model_to_use = "llama-3.2-11b-vision-preview" # Ottimo per debugging su screenshot
+                    model_to_use = "llama-3.2-11b-vision" # Ottimo per debugging su screenshot
                     
                     messages = [
                         {"role": "system", "content": system_msg},
