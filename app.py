@@ -1,132 +1,128 @@
 import streamlit as st
 from groq import Groq
 import os
-import base64
-from PIL import Image
-from io import BytesIO
-from streamlit_paste_button import paste_image_button
+from dotenv import load_dotenv
 
-# Configurazione della pagina
-st.set_page_config(page_title="AI Coding Assistant", layout="wide")
-st.title("🖥️ Il tuo Assistente Programmer ibrido (Text & Vision)")
+# --- 1. CONFIGURAZIONE INIZIALE ---
+load_dotenv()
+GROQ_KEY = os.getenv("GROQ_API_KEY")
 
-# --- Configurazione Sidebar ---
-with st.sidebar:
-    st.header("Configurazione")
-    # Puoi dinamizzare anche qui la lingua/ruolo runtime
-    ruolo_esperto = st.selectbox("L'AI è un esperto in:", ["Python & Debugging", "Web Development", "DevOps"])
-    api_key = st.text_input("Inserisci Groq API Key:", type="password")
-    
-    st.markdown("---")
-    st.warning("⚠️ Per le immagini verrà usato Llama-3.2-Vision (velocissimo), per il testo puro Llama-3.3-70B.")
+if not GROQ_KEY:
+    try:
+        if "GROQ_API_KEY" in st.secrets:
+            GROQ_KEY = st.secrets["GROQ_API_KEY"]
+    except Exception:
+        GROQ_KEY = None
 
-# --- Helper function: Codifica immagine per l'API ---
-def encode_image(image):
-    buffered = BytesIO()
-    image.save(buffered, format="PNG") # Assicuriamoci sia PNG per compatibilità
-    return base64.b64encode(buffered.getvalue()).decode('utf-8')
+if not GROQ_KEY:
+    st.error("⚠️ Chiave API non trovata! Controlla il file .env o i Secrets.")
+    st.stop()
 
-# --- Inizializzazione Session State ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "image_to_process" not in st.session_state:
-    st.session_state.image_to_process = None
+client = Groq(api_key=GROQ_KEY)
 
-# Mostra lo storico della chat
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-        if "image" in message:
-            st.image(message["image"], caption="Screenshot allegato")
+# --- 2. LOGICA DI ROUTING AUTOMATICO ---
+def get_automatic_model(user_query):
+    """Analizza il prompt e restituisce l'ID del modello più adatto."""
+    query = user_query.lower()
+    # Se la richiesta riguarda correzioni o ottimizzazioni
+    if any(word in query for word in ["debug", "errore", "fix", "ottimizza", "correggi"]):
+        return "groq/compound"
+    # Se la richiesta riguarda esplicitamente il mondo dei dati
+    if any(word in query for word in ["python", "data", "ml", "deep", "pandas", "sklearn", "torch", "tensorflow"]):
+        return "qwen/qwen3-32b"
+    # Default per architetture e logica generale (Java)
+    return "openai/gpt-oss-120b"
 
-# --- UI per Input (Tasto Incolla & Chat Input) ---
-
-# Area per incollare l'immagine (in alto)
-paste_result = paste_image_button(
-    label="📋 Premi CTRL+V qui per incollare uno Screenshot",
-    errors="ignore"
+# --- 3. SYSTEM PROMPT IBRIDO ---
+# Questo assicura che il modello sappia QUALE linguaggio usare in base al contesto
+hybrid_system_prompt = (
+    "Sei un assistente tecnico Senior. Il tuo comportamento varia in base al dominio:\n"
+    "1. DATA SCIENCE/ML: Se la richiesta riguarda dati, analisi o Machine Learning, usa PYTHON. "
+    "Spiega la logica matematica e le metriche.\n"
+    "2. ALTRI PROGETTI: Per software engineering, algoritmi o backend, usa JAVA 17+. "
+    "Segui i principi SOLID e i design pattern.\n"
+    "Rispondi sempre in italiano e usa commenti chiari nel codice."
 )
 
-# Se l'utente ha incollato qualcosa, lo memorizziamo temporaneamente
-if paste_result.image_data is not None:
-    st.session_state.image_to_process = paste_result.image_data
-    st.image(st.session_state.image_to_process, caption="Immagine pronta", width=200)
+# --- 4. SIDEBAR E INTERFACCIA ---
+st.set_page_config(page_title="AI Smart Orchestrator", page_icon="🤖")
 
-# Chat input classico (sempre visibile)
-prompt = st.chat_input("Fai la tua domanda sul codice...")
+with st.sidebar:
+    st.header("⚙️ Configurazione")
+    
+    model_map = {
+        "Auto-Select (Intelligente)": "auto",
+        "GPT-OSS 120B (Architetto)": "openai/gpt-oss-120b",
+        "Groq Compound (Validatore)": "groq/compound",
+        "Qwen 3 32B (Specialista Coding)": "qwen/qwen3-32b",
+        "Llama 3.3 70B (Versatile)": "llama-3.3-70b-versatile"
+    }
+    
+    selected_option = st.selectbox("Scegli il modello:", list(model_map.keys()))
+    user_choice = model_map[selected_option]
+    
+    temp = st.slider("Temperatura (Creatività)", 0.0, 1.0, 0.2, 0.05)
+    
+    if st.button("🗑️ Reset Conversazione"):
+        st.session_state["messages"] = [{"role": "system", "content": hybrid_system_prompt}]
+        st.rerun()
 
-# --- Logica di Processing ---
-if prompt and api_key:
-    client = Groq(api_key=api_key)
-    system_msg = f"Sei un esperto in {ruolo_esperto}. Rispondi sempre in Italiano."
+st.title("🤖 AI Smart Orchestrator")
+st.info("L'AI sceglierà automaticamente tra Java e Python in base alla tua richiesta.")
+
+# Inizializzazione cronologia
+if "messages" not in st.session_state:
+    st.session_state["messages"] = [{"role": "system", "content": hybrid_system_prompt}]
+
+# Mostra i messaggi precedenti
+for message in st.session_state["messages"]:
+    if message["role"] != "system":
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+# --- 5. GESTIONE INPUT E RISPOSTA ---
+if prompt := st.chat_input("Chiedi un algoritmo, un fix o un'analisi dati..."):
     
-    # 1. Recuperiamo l'eventuale immagine memorizzata
-    pasted_img = st.session_state.image_to_process
-    
-    # 2. Mostriamo il messaggio dell'utente nella UI
+    # Determinazione del modello da usare
+    if user_choice == "auto":
+        actual_model = get_automatic_model(prompt)
+        model_label = f"Auto-selected: {actual_model}"
+    else:
+        actual_model = user_choice
+        model_label = f"Manuale: {actual_model}"
+
+    # Aggiunta messaggio utente
+    st.session_state["messages"].append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
-        if pasted_img:
-            st.image(pasted_img, caption="Screenshot allegato")
-    
-    # Aggiungiamo alla session state
-    user_msg_for_state = {"role": "user", "content": prompt}
-    if pasted_img:
-        user_msg_for_state["image"] = pasted_img # Salviamo PIL image per UI locale
-    st.session_state.messages.append(user_msg_for_state)
 
-    # 3. ROUTING: Chiamata API Groq
+    # Generazione risposta dell'assistente
     with st.chat_message("assistant"):
-        with st.spinner("Analizzando..."):
-            
-            try:
-                # --- CASO A: C'è un'immagine (Usiamo Llama Vision) ---
-                if pasted_img:
-                    base64_image = encode_image(pasted_img)
-                    model_to_use = "llama-3.2-11b-vision" # Ottimo per debugging su screenshot
-                    
-                    messages = [
-                        {"role": "system", "content": system_msg},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/png;base64,{base64_image}",
-                                    },
-                                },
-                            ],
-                        }
-                    ]
-                
-                # --- CASO B: Testo Puro (Usiamo Llama 3.3 70B) ---
-                else:
-                    model_to_use = "llama-3.3-70b-versatile"
-                    # Qui dovresti passare anche lo storico (saltato per brevità)
-                    messages = [
-                        {"role": "system", "content": system_msg},
-                        {"role": "user", "content": prompt}
-                    ]
-
-                # Chiamata API unica
-                response = client.chat.completions.create(
-                    model=model_to_use,
-                    messages=messages,
-                    temperature=0.1
+        st.caption(f"🚀 Modello in uso: `{actual_model}`")
+        
+        try:
+            def response_generator():
+                stream = client.chat.completions.create(
+                    model=actual_model,
+                    messages=st.session_state["messages"],
+                    temperature=temp,
+                    stream=True,
                 )
-                
-                # Gestione risposta
-                full_response = response.choices[0].message.content
-                st.markdown(full_response)
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
-                
-                # Reset dell'immagine dopo l'uso
-                st.session_state.image_to_process = None
-                
-            except Exception as e:
-                st.error(f"Errore API Groq: {e}")
+                for chunk in stream:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        yield content
 
-elif prompt and not api_key:
-    st.warning("Per favore inserisci la tua API Key nella sidebar.")
+            full_response = st.write_stream(response_generator())
+            st.session_state["messages"].append({"role": "assistant", "content": full_response})
+
+            # Bottone di download per il codice generato
+            st.download_button(
+                label="📥 Scarica Codice",
+                data=full_response,
+                file_name="soluzione_tecnica.txt",
+                mime="text/plain"
+            )
+
+        except Exception as e:
+            st.error(f"Errore durante la chiamata a Groq: {e}")
