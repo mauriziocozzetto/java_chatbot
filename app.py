@@ -1,104 +1,132 @@
 import streamlit as st
 from groq import Groq
 import os
-from dotenv import load_dotenv
+import base64
+from PIL import Image
+from io import BytesIO
+from streamlit_paste_button import paste_image_button
 
-# 1. Caricamento configurazioni
-# 1. Prova a caricare dal file .env (Locale)
-load_dotenv()
-GROQ_KEY = os.getenv("GROQ_API_KEY")
+# Configurazione della pagina
+st.set_page_config(page_title="AI Coding Assistant", layout="wide")
+st.title("🖥️ Il tuo Assistente Programmer ibrido (Text & Vision)")
 
-# 2. Se non lo trova nel .env, prova nei Secrets di Streamlit (Cloud)
-if not GROQ_KEY:
-    try:
-        # Usiamo .get per evitare il crash se la chiave manca,
-        # ma avvolgiamo tutto in un try/except per sicurezza estrema
-        if "GROQ_API_KEY" in st.secrets:
-            GROQ_KEY = st.secrets["GROQ_API_KEY"]
-    except Exception:
-        # Se anche i secrets danno errore o non esistono, GROQ_KEY resta None
-        GROQ_KEY = None
-
-# 3. Controllo finale
-if not GROQ_KEY:
-    st.error(
-        "⚠️ Chiave API non trovata! Assicurati che il file .env contenga GROQ_API_KEY=tuachiave")
-    st.stop()
-
-client = Groq(api_key=GROQ_KEY)
-
-# --- SIDEBAR: CONFIGURAZIONE AVANZATA ---
+# --- Configurazione Sidebar ---
 with st.sidebar:
     st.header("Configurazione")
+    # Puoi dinamizzare anche qui la lingua/ruolo runtime
+    ruolo_esperto = st.selectbox("L'AI è un esperto in:", ["Python & Debugging", "Web Development", "DevOps"])
+    api_key = st.text_input("Inserisci Groq API Key:", type="password")
+    
+    st.markdown("---")
+    st.warning("⚠️ Per le immagini verrà usato Llama-3.2-Vision (velocissimo), per il testo puro Llama-3.3-70B.")
 
-    # SUGGERIMENTO 2: Selezione dinamica del modello
-    model_option = st.selectbox(
-        "Scegli il modello:",
-        ("Llama 3.3 70B (Architetto)", "Qwen 3 32B (Chirurgo del Codice)"),
-        help="Llama è meglio per spiegazioni, Qwen è più preciso nel coding puro."
-    )
+# --- Helper function: Codifica immagine per l'API ---
+def encode_image(image):
+    buffered = BytesIO()
+    image.save(buffered, format="PNG") # Assicuriamoci sia PNG per compatibilità
+    return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-    selected_model = "llama-3.3-70b-versatile" if "Llama" in model_option else "qwen/qwen3-32b"
+# --- Inizializzazione Session State ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "image_to_process" not in st.session_state:
+    st.session_state.image_to_process = None
 
-    st.subheader("Parametri AI")
-    temp = st.slider("Temperatura (Creatività)", 0.0, 1.0, 0.2, 0.05)
+# Mostra lo storico della chat
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        if "image" in message:
+            st.image(message["image"], caption="Screenshot allegato")
 
-    if st.button("🗑️ Reset Conversazione"):
-        st.session_state["messages"] = []
-        st.rerun()
+# --- UI per Input (Tasto Incolla & Chat Input) ---
 
-# --- LOGICA SYSTEM PROMPT ---
-java_system_prompt = (
-    "Sei un esperto Senior Java Developer e Software Architect. "
-    "Il tuo compito è generare codice Java moderno (Java 17+), robusto e ben strutturato. "
-    "Per ogni richiesta: 1. Fornisci il codice completo e pronto alla compilazione. "
-    "2. Spiega brevemente il pattern di design o la logica utilizzata. "
-    "3. Includi sempre esempi di test (JUnit) o una classe Main per il test. "
-    "Rispondi sempre in italiano e usa commenti chiari nel codice."
+# Area per incollare l'immagine (in alto)
+paste_result = paste_image_button(
+    label="📋 Premi CTRL+V qui per incollare uno Screenshot",
+    errors="ignore"
 )
 
-if "messages" not in st.session_state:
-    st.session_state["messages"] = [
-        {"role": "system", "content": java_system_prompt}]
+# Se l'utente ha incollato qualcosa, lo memorizziamo temporaneamente
+if paste_result.image_data is not None:
+    st.session_state.image_to_process = paste_result.image_data
+    st.image(st.session_state.image_to_process, caption="Immagine pronta", width=200)
 
-# Mostra cronologia
-for message in st.session_state["messages"]:
-    if message["role"] != "system":
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+# Chat input classico (sempre visibile)
+prompt = st.chat_input("Fai la tua domanda sul codice...")
 
-# --- GESTIONE INPUT E RISPOSTA ---
-if prompt := st.chat_input("Chiedi qualcosa su Java..."):
-    st.session_state["messages"].append({"role": "user", "content": prompt})
+# --- Logica di Processing ---
+if prompt and api_key:
+    client = Groq(api_key=api_key)
+    system_msg = f"Sei un esperto in {ruolo_esperto}. Rispondi sempre in Italiano."
+    
+    # 1. Recuperiamo l'eventuale immagine memorizzata
+    pasted_img = st.session_state.image_to_process
+    
+    # 2. Mostriamo il messaggio dell'utente nella UI
     with st.chat_message("user"):
         st.markdown(prompt)
+        if pasted_img:
+            st.image(pasted_img, caption="Screenshot allegato")
+    
+    # Aggiungiamo alla session state
+    user_msg_for_state = {"role": "user", "content": prompt}
+    if pasted_img:
+        user_msg_for_state["image"] = pasted_img # Salviamo PIL image per UI locale
+    st.session_state.messages.append(user_msg_for_state)
 
+    # 3. ROUTING: Chiamata API Groq
     with st.chat_message("assistant"):
-        # SUGGERIMENTO 1: Gestione Errori API (Try-Except)
-        try:
-            def response_generator():
-                stream = client.chat.completions.create(
-                    model=selected_model,
-                    messages=st.session_state["messages"],
-                    temperature=temp,
-                    stream=True,
+        with st.spinner("Analizzando..."):
+            
+            try:
+                # --- CASO A: C'è un'immagine (Usiamo Llama Vision) ---
+                if pasted_img:
+                    base64_image = encode_image(pasted_img)
+                    model_to_use = "llama-3.2-11b-vision-preview" # Ottimo per debugging su screenshot
+                    
+                    messages = [
+                        {"role": "system", "content": system_msg},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/png;base64,{base64_image}",
+                                    },
+                                },
+                            ],
+                        }
+                    ]
+                
+                # --- CASO B: Testo Puro (Usiamo Llama 3.3 70B) ---
+                else:
+                    model_to_use = "llama-3.3-70b-versatile"
+                    # Qui dovresti passare anche lo storico (saltato per brevità)
+                    messages = [
+                        {"role": "system", "content": system_msg},
+                        {"role": "user", "content": prompt}
+                    ]
+
+                # Chiamata API unica
+                response = client.chat.completions.create(
+                    model=model_to_use,
+                    messages=messages,
+                    temperature=0.1
                 )
-                for chunk in stream:
-                    content = chunk.choices[0].delta.content
-                    if content:
-                        yield content
+                
+                # Gestione risposta
+                full_response = response.choices[0].message.content
+                st.markdown(full_response)
+                st.session_state.messages.append({"role": "assistant", "content": full_response})
+                
+                # Reset dell'immagine dopo l'uso
+                st.session_state.image_to_process = None
+                
+            except Exception as e:
+                st.error(f"Errore API Groq: {e}")
 
-            full_response = st.write_stream(response_generator())
-            st.session_state["messages"].append(
-                {"role": "assistant", "content": full_response})
-
-            # SUGGERIMENTO 3: Pulsante di Download del codice
-            st.download_button(
-                label="📥 Scarica Codice/Risposta",
-                data=full_response,
-                file_name="risposta_java.txt",
-                mime="text/plain"
-            )
-
-        except Exception as e:
-            st.error(f"Si è verificato un errore con le API di Groq: {e}")
+elif prompt and not api_key:
+    st.warning("Per favore inserisci la tua API Key nella sidebar.")
